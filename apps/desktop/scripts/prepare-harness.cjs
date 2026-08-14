@@ -4,8 +4,9 @@ const { spawnSync } = require("node:child_process");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const workspaceRoot = path.resolve(desktopRoot, "../..");
-const deployDir = path.resolve(workspaceRoot, "work", "desktop-runtime");
-const nodeRuntimeDir = path.resolve(workspaceRoot, "work", "desktop-node");
+const runtimeRoot = path.resolve(desktopRoot, ".desktop-runtime");
+const deployDir = path.join(runtimeRoot, "harness");
+const nodeRuntimeDir = path.join(runtimeRoot, "node");
 
 if (fs.existsSync(deployDir)) {
   try {

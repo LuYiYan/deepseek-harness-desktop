@@ -27,14 +27,14 @@
     ],
     "extraResources": [
       {
-        "from": "../../work/desktop-runtime",
+        "from": ".desktop-runtime/harness",
         "to": "harness",
         "filter": [
           "**/*"
         ]
       },
       {
-        "from": "../../work/desktop-node/node.exe",
+        "from": ".desktop-runtime/node/node.exe",
         "to": "node/node.exe",
         "filter": [
           "**/*"
