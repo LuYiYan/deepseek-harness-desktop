@@ -8,7 +8,7 @@
   "scripts": {
     "prepare:harness": "node scripts/prepare-harness.cjs",
     "start": "electron .",
-    "dist": "pnpm run prepare:harness && electron-builder --win --publish never",
+    "dist": "pnpm run prepare:harness && electron-builder --win --publish=never",
     "pack": "pnpm run prepare:harness && electron-builder --win --dir"
   },
   "devDependencies": {
