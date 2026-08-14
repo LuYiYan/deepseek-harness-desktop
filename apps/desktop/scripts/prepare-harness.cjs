@@ -90,7 +90,12 @@ fs.cpSync(workspaceRoot, buildDir, {
 
 const installResult = spawnSync(
   "pnpm",
-  ["install", "--offline", "--ignore-scripts", "--shamefully-hoist"],
+  [
+    "install",
+    ...(process.env.GITHUB_ACTIONS === "true" ? [] : ["--offline"]),
+    "--ignore-scripts",
+    "--shamefully-hoist",
+  ],
   {
     cwd: buildDir,
     env: {
