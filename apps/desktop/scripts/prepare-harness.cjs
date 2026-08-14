@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -7,6 +8,7 @@ const workspaceRoot = path.resolve(desktopRoot, "../..");
 const runtimeRoot = path.resolve(desktopRoot, ".desktop-runtime");
 const deployDir = path.join(runtimeRoot, "harness");
 const nodeRuntimeDir = path.join(runtimeRoot, "node");
+const buildDir = path.join(os.tmpdir(), `dsh-desktop-runtime-${process.pid}`);
 
 if (fs.existsSync(deployDir)) {
   try {
@@ -24,6 +26,13 @@ if (fs.existsSync(deployDir)) {
 }
 
 fs.rmSync(nodeRuntimeDir, {
+  recursive: true,
+  force: true,
+  maxRetries: 8,
+  retryDelay: 250,
+});
+
+fs.rmSync(buildDir, {
   recursive: true,
   force: true,
   maxRetries: 8,
@@ -73,7 +82,7 @@ function shouldCopy(source) {
 
 console.log(`Preparing desktop runtime at ${deployDir}`);
 
-fs.cpSync(workspaceRoot, deployDir, {
+fs.cpSync(workspaceRoot, buildDir, {
   recursive: true,
   dereference: true,
   filter: shouldCopy,
@@ -83,7 +92,7 @@ const installResult = spawnSync(
   "pnpm",
   ["install", "--offline", "--ignore-scripts", "--shamefully-hoist"],
   {
-    cwd: deployDir,
+    cwd: buildDir,
     env: {
       ...process.env,
       CI: "true",
@@ -114,7 +123,7 @@ function copyPackage(sourceDir, targetDir) {
 
 function copyPnpmStorePackagesIntoNodeModules() {
   const sourceStore = path.join(workspaceRoot, "node_modules", ".pnpm");
-  const targetNodeModules = path.join(deployDir, "node_modules");
+  const targetNodeModules = path.join(buildDir, "node_modules");
 
   if (!fs.existsSync(sourceStore)) {
     return;
@@ -199,7 +208,7 @@ function copyWorkspacePackagesIntoNodeModules() {
     collectPackages(path.join(workspaceRoot, root));
   }
 
-  const scopedRoot = path.join(deployDir, "node_modules", "@deepseek-ai");
+  const scopedRoot = path.join(buildDir, "node_modules", "@deepseek-ai");
   fs.mkdirSync(scopedRoot, { recursive: true });
 
   for (const packageDir of packageDirs) {
@@ -233,6 +242,11 @@ function copyWorkspacePackagesIntoNodeModules() {
 
 copyPnpmStorePackagesIntoNodeModules();
 copyWorkspacePackagesIntoNodeModules();
+
+fs.cpSync(buildDir, deployDir, {
+  recursive: true,
+  dereference: true,
+});
 
 fs.mkdirSync(nodeRuntimeDir, { recursive: true });
 fs.copyFileSync(process.execPath, path.join(nodeRuntimeDir, process.platform === "win32" ? "node.exe" : "node"));
