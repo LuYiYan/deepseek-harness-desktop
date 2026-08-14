@@ -39,15 +39,21 @@ jobs:
           pnpm exec tsdown --env.DSH_BUILD_FACE client
           pnpm --filter @deepseek-ai/dsh-web-frontend run build
 
-      - name: Build desktop installer
-        run: pnpm --dir apps/desktop run dist
+      - name: Build desktop app
+        run: pnpm --dir apps/desktop run pack
+
+      - name: Package desktop app
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path apps/desktop/dist-desktop/win-unpacked/* `
+            -DestinationPath apps/desktop/dist-desktop/DeepSeek-Harness-Desktop-win-x64.zip `
+            -Force
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            apps/desktop/dist-desktop/*.exe
-            apps/desktop/dist-desktop/*.blockmap
-            apps/desktop/dist-desktop/latest.yml
+            apps/desktop/dist-desktop/DeepSeek-Harness-Desktop-win-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
