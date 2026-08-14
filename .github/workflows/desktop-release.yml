@@ -1,0 +1,53 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Harness
+        shell: pwsh
+        run: |
+          pnpm exec tsc -b tsconfig.host.json
+          pnpm exec tsdown --env.DSH_BUILD_FACE host
+          pnpm exec tsc -b tsconfig.client.json
+          pnpm exec tsdown --env.DSH_BUILD_FACE client
+          pnpm --filter @deepseek-ai/dsh-web-frontend run build
+
+      - name: Build desktop installer
+        run: pnpm --dir apps/desktop run dist
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/dist-desktop/*.exe
+            apps/desktop/dist-desktop/*.blockmap
+            apps/desktop/dist-desktop/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

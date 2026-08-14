@@ -1,0 +1,50 @@
+{
+  "name": "@deepseek-ai/dsh-desktop",
+  "description": "Desktop shell for DeepSeek Harness",
+  "version": "0.1.0-rc.5",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/main.cjs",
+  "scripts": {
+    "prepare:harness": "node scripts/prepare-harness.cjs",
+    "start": "electron .",
+    "dist": "pnpm run prepare:harness && electron-builder --win",
+    "pack": "pnpm run prepare:harness && electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ai.deepseek.harness.desktop",
+    "productName": "DeepSeek Harness",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../work/desktop-runtime",
+        "to": "harness",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../work/desktop-node/node.exe",
+        "to": "node/node.exe",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
