@@ -49,7 +49,7 @@ jobs:
             Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length / 1MB, 1)}}
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             apps/desktop/dist-desktop/*.exe
