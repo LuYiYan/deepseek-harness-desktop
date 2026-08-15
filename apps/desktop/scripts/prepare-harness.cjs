@@ -112,15 +112,41 @@ if (installResult.status !== 0) {
   process.exit(installResult.status ?? 1);
 }
 
+function isDirectory(target) {
+  try {
+    // statSync follows symlinks; pnpm stores package dependencies under
+    // .pnpm/<pkg>/node_modules/<dep> as symlinks, so Dirent.isDirectory()
+    // would report false for them and silently skip the copy.
+    return fs.statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function copyPackage(sourceDir, targetDir) {
-  if (fs.existsSync(targetDir)) {
+  const existing = fs.lstatSync(targetDir, { throwIfNoEntry: false });
+
+  // A real directory already staged here was copied earlier: deduplicate.
+  // A symlink is the pnpm hoist placeholder (`--shamefully-hoist` links the
+  // top-level node_modules entry into .pnpm); it must be replaced with the
+  // resolved package contents so the packaged app resolves dependencies.
+  if (existing && !existing.isSymbolicLink()) {
     return false;
   }
 
-  fs.cpSync(sourceDir, targetDir, {
+  if (existing) {
+    fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  }
+
+  // Resolve the source symlink before copying so the filter's path.relative
+  // works against a concrete tree (cpSync's dereference + filter interaction
+  // is not specified and has proven unreliable across Node versions).
+  const realSource = fs.realpathSync(sourceDir);
+
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+  fs.cpSync(realSource, targetDir, {
     recursive: true,
-    dereference: true,
-    filter: (source) => !path.relative(sourceDir, source).split(path.sep).includes("node_modules"),
+    filter: (source) => !path.relative(realSource, source).split(path.sep).includes("node_modules"),
   });
 
   return true;
@@ -148,22 +174,28 @@ function copyPnpmStorePackagesIntoNodeModules() {
     }
 
     for (const entry of fs.readdirSync(packageNodeModules, { withFileTypes: true })) {
-      if (!entry.isDirectory()) {
+      const sourceDir = path.join(packageNodeModules, entry.name);
+
+      if (!isDirectory(sourceDir)) {
         continue;
       }
 
-      const sourceDir = path.join(packageNodeModules, entry.name);
-
       if (entry.name.startsWith("@")) {
+        if (entry.name === "@deepseek-ai") {
+          // Workspace packages are staged by copyWorkspacePackagesIntoNodeModules.
+          continue;
+        }
+
         const targetScope = path.join(targetNodeModules, entry.name);
         fs.mkdirSync(targetScope, { recursive: true });
 
         for (const scopedEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-          if (!scopedEntry.isDirectory() || entry.name === "@deepseek-ai") {
+          const scopedSourceDir = path.join(sourceDir, scopedEntry.name);
+
+          if (!isDirectory(scopedSourceDir)) {
             continue;
           }
 
-          const scopedSourceDir = path.join(sourceDir, scopedEntry.name);
           const scopedTargetDir = path.join(targetScope, scopedEntry.name);
 
           if (copyPackage(scopedSourceDir, scopedTargetDir)) {
@@ -197,12 +229,21 @@ function copyWorkspacePackagesIntoNodeModules() {
         continue;
       }
 
+      // Nested workspace members live under a directory that is itself a
+      // package (`native/landlock-run/packages/*`), so recursion must continue
+      // past a package.json. Skip trees that never hold workspace members.
+      if (entry.name === "node_modules"
+        || entry.name === ".git"
+        || entry.name === ".desktop-runtime"
+        || entry.name === ".desktop-harness") {
+        continue;
+      }
+
       const entryPath = path.join(baseDir, entry.name);
       const packageJson = path.join(entryPath, "package.json");
 
       if (fs.existsSync(packageJson)) {
         packageDirs.push(entryPath);
-        continue;
       }
 
       collectPackages(entryPath);
