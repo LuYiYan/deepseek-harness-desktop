@@ -289,6 +289,17 @@ function copyWorkspacePackagesIntoNodeModules() {
 copyPnpmStorePackagesIntoNodeModules();
 copyWorkspacePackagesIntoNodeModules();
 
+// The flattening copies every dependency to the top-level node_modules, so the
+// `.pnpm` virtual store is redundant at runtime. Dropping it keeps the packaged
+// runtime from duplicating the whole dependency tree (which otherwise pushes
+// the installer past the NSIS size limits).
+fs.rmSync(path.join(buildDir, "node_modules", ".pnpm"), {
+  recursive: true,
+  force: true,
+  maxRetries: 8,
+  retryDelay: 250,
+});
+
 fs.cpSync(buildDir, deployDir, {
   recursive: true,
   dereference: true,

@@ -41,6 +41,8 @@ jobs:
 
       - name: Build desktop app (NSIS installer)
         run: pnpm --dir apps/desktop run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Verify installer
         shell: pwsh
