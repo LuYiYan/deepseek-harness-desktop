@@ -46,8 +46,7 @@
         "nsis"
       ],
       "artifactName": "DeepSeek-Harness-Desktop-Setup-${version}.${ext}",
-      "signAndEditExecutable": false,
-      "signDlls": false
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": true,
