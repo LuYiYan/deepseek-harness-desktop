@@ -95,6 +95,10 @@ const installResult = spawnSync(
     ...(process.env.GITHUB_ACTIONS === "true" ? [] : ["--offline"]),
     "--ignore-scripts",
     "--shamefully-hoist",
+    // The packaged runtime runs compiled `lib/`, not dev tooling, so omit
+    // devDependencies (electron, typescript, vitest, tsx, ...). This keeps the
+    // installer under the NSIS size limits that otherwise fail the build.
+    "--prod",
   ],
   {
     cwd: buildDir,
@@ -286,23 +290,27 @@ function copyWorkspacePackagesIntoNodeModules() {
   }
 }
 
-copyPnpmStorePackagesIntoNodeModules();
+// The `--shamefully-hoist --prod` install already places every production
+// dependency at the top level of the staged node_modules, so the external-package
+// store copy is no longer needed; only the linked workspace packages are staged
+// here. Both the top-level hoist and these workspace copies are dereferenced by
+// the final `cpSync`.
 copyWorkspacePackagesIntoNodeModules();
-
-// The flattening copies every dependency to the top-level node_modules, so the
-// `.pnpm` virtual store is redundant at runtime. Dropping it keeps the packaged
-// runtime from duplicating the whole dependency tree (which otherwise pushes
-// the installer past the NSIS size limits).
-fs.rmSync(path.join(buildDir, "node_modules", ".pnpm"), {
-  recursive: true,
-  force: true,
-  maxRetries: 8,
-  retryDelay: 250,
-});
 
 fs.cpSync(buildDir, deployDir, {
   recursive: true,
   dereference: true,
+});
+
+// The top-level hoist dereferenced above makes the `.pnpm` virtual store
+// redundant at runtime. Dropping it from the deploy keeps the packaged runtime
+// from duplicating the whole dependency tree (which otherwise pushes the
+// installer past the NSIS size limits).
+fs.rmSync(path.join(deployDir, "node_modules", ".pnpm"), {
+  recursive: true,
+  force: true,
+  maxRetries: 8,
+  retryDelay: 250,
 });
 
 fs.mkdirSync(nodeRuntimeDir, { recursive: true });
