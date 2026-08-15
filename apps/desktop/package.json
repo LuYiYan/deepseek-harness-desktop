@@ -44,7 +44,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "DeepSeek-Harness-Desktop-Setup-${version}.${ext}"
     }
   }
 }
