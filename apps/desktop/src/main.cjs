@@ -31,6 +31,36 @@ function getNodeExecutable() {
   return process.env.DSH_DESKTOP_NODE || "node";
 }
 
+// Packaged installs get a dedicated, per-user harness home under the app's
+// userData, so the installed app never touches a developer's real ~/.dsh and
+// has a predictable place to seed first-run configuration. Development keeps
+// the ambient environment (and therefore the developer's own ~/.dsh).
+function getDshHome() {
+  return app.isPackaged ? app.getPath("userData") : undefined;
+}
+
+function getSeedRoot() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "seed")
+    : path.join(__dirname, "..", "seed");
+}
+
+// Copy the bundled first-run environment into the harness home on the first
+// launch only: existing user files are never overwritten, so a later edit or a
+// key rotation survives restarts and re-installs.
+function seedFirstRunEnvironment(home) {
+  const seedRoot = getSeedRoot();
+  if (!fs.existsSync(seedRoot)) return;
+  fs.mkdirSync(home, { recursive: true });
+  for (const name of [".credentials.yaml", "settings.yaml"]) {
+    const source = path.join(seedRoot, name);
+    const target = path.join(home, name);
+    if (fs.existsSync(source) && !fs.existsSync(target)) {
+      fs.copyFileSync(source, target);
+    }
+  }
+}
+
 function getServerCommand(cliBin, host, port) {
   if (app.isPackaged) {
     const patchPath = path.join(app.getPath("userData"), "desktop.patch.yml");
@@ -170,6 +200,9 @@ async function startHarnessServer() {
   const url = `http://${host}:${port}`;
   const logDir = path.join(app.getPath("userData"), "logs");
 
+  const dshHome = getDshHome();
+  if (dshHome !== undefined) seedFirstRunEnvironment(dshHome);
+
   if (!app.isPackaged) {
     try {
       await waitForServer(url, 1500);
@@ -192,6 +225,7 @@ async function startHarnessServer() {
       ...process.env,
       CI: "true",
       PNPM_CONFIG_CONFIRM_MODULES_PURGE: "false",
+      ...(dshHome !== undefined ? { DSH_HOME: dshHome } : {}),
     },
     stdio: ["ignore", stdout, stderr],
     windowsHide: true,

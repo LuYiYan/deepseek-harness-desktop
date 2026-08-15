@@ -46,6 +46,9 @@ const ignoredTopLevel = new Set([
   ".github",
   ".worktrees",
   ".desktop-runtime",
+  ".pnpm-store",
+  ".reasonix",
+  ".vs",
   "coverage",
   "dist-exe",
   "worktrees",
@@ -157,7 +160,7 @@ function copyPackage(sourceDir, targetDir) {
 }
 
 function copyPnpmStorePackagesIntoNodeModules() {
-  const sourceStore = path.join(workspaceRoot, "node_modules", ".pnpm");
+  const sourceStore = path.join(buildDir, "node_modules", ".pnpm");
   const targetNodeModules = path.join(buildDir, "node_modules");
 
   if (!fs.existsSync(sourceStore)) {
@@ -290,17 +293,141 @@ function copyWorkspacePackagesIntoNodeModules() {
   }
 }
 
-// The `--shamefully-hoist --prod` install already places every production
-// dependency at the top level of the staged node_modules, so the external-package
-// store copy is no longer needed; only the linked workspace packages are staged
-// here. Both the top-level hoist and these workspace copies are dereferenced by
-// the final `cpSync`.
+// `copyWorkspacePackagesIntoNodeModules` only stages the workspace packages
+// under apps/, packages/, vendor/, and native/. Workspace members that live
+// elsewhere (website, examples, python/sdk-runtime) are still junctions that
+// `linkWorkspacePackages` wrote into node_modules/@deepseek-ai; the final copy
+// runs with `dereference: false`, so a leftover junction would fail with EPERM
+// when cpSync tries to recreate it as a symlink. Resolve each remaining link
+// and replace it with its real contents (nested node_modules excluded, matching
+// copyPackage).
+function materializeRemainingWorkspaceLinks() {
+  const targetNodeModules = path.join(buildDir, "node_modules");
+  let materialized = 0;
+
+  function materialize(fullPath) {
+    const realSource = fs.realpathSync(fullPath);
+    fs.rmSync(fullPath, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+    fs.cpSync(realSource, fullPath, {
+      recursive: true,
+      filter: (source) => !path.relative(realSource, source).split(path.sep).includes("node_modules"),
+    });
+    materialized += 1;
+  }
+
+  for (const entry of fs.readdirSync(targetNodeModules, { withFileTypes: true })) {
+    if (entry.name === ".pnpm") continue;
+    const fullPath = path.join(targetNodeModules, entry.name);
+    if (fs.lstatSync(fullPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      materialize(fullPath);
+      continue;
+    }
+    if (entry.isDirectory() && entry.name.startsWith("@")) {
+      for (const scoped of fs.readdirSync(fullPath, { withFileTypes: true })) {
+        const scopedPath = path.join(fullPath, scoped.name);
+        if (fs.lstatSync(scopedPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+          materialize(scopedPath);
+        }
+      }
+    }
+  }
+
+  if (materialized > 0) {
+    console.log(`Materialized ${materialized} remaining workspace links into node_modules`);
+  }
+}
+
+// Materialize the external packages from the reinstall's virtual store into the
+// top-level node_modules as real files, then materialize the linked workspace
+// packages the same way. A single whole-tree `dereference` copy is deliberately
+// avoided: dereferencing the `.pnpm` junctions follows cyclic peer-dependency
+// links (cordis↔include, the api triples) into an unbounded recursion that
+// crashes Node with STATUS_STACK_BUFFER_OVERRUN on Windows. Each package is
+// instead resolved through `realpathSync` and copied with its nested
+// `node_modules` excluded, so no junction cycle is ever followed.
+copyPnpmStorePackagesIntoNodeModules();
 copyWorkspacePackagesIntoNodeModules();
+materializeRemainingWorkspaceLinks();
 
 fs.cpSync(buildDir, deployDir, {
   recursive: true,
-  dereference: true,
+  dereference: false,
+  filter: (source) => {
+    const relative = path.relative(buildDir, source);
+    const parts = relative.split(path.sep);
+    // `.pnpm` and every nested node_modules hold junctions that crash Node's
+    // recursive copy on Windows (STATUS_STACK_BUFFER_OVERRUN). The flattened
+    // top-level node_modules already provides every runtime dependency, so both
+    // are redundant — `.pnpm` is dropped and nested node_modules are stripped
+    // right after this copy — and can be skipped outright.
+    return !parts.includes(".pnpm") && !parts.slice(1).includes("node_modules");
+  },
 });
+
+// Integrity check: `fs.cpSync` is known to silently produce a partial copy
+// when it follows tens of thousands of nested pnpm symlinks under heavy load
+// on Windows runners.  Verify the deployed tree and patch any missing
+// top-level node_modules entries by re-copying them individually — a single
+// large recursive copy is the failure mode that bites, but a small per-package
+// copy completes reliably.
+const deployedNodeModules = path.join(deployDir, "node_modules");
+if (!fs.existsSync(deployedNodeModules)) {
+  fs.mkdirSync(deployedNodeModules, { recursive: true });
+}
+
+const sourceNodeModules = path.join(buildDir, "node_modules");
+// `.pnpm` is deliberately skipped by the deploy copy above (its junctions are
+// redundant once the top level is flattened, and dereferencing them re-enters
+// the cyclic store); it must not count as a missing entry here.
+const sourceTopLevel = new Set(fs.readdirSync(sourceNodeModules).filter((p) => p !== ".pnpm"));
+const deployedTopLevel = new Set(fs.readdirSync(deployedNodeModules));
+const missingTopLevel = [...sourceTopLevel].filter((p) => !deployedTopLevel.has(p));
+
+if (missingTopLevel.length > 0) {
+  console.warn(
+    `cpSync missed ${missingTopLevel.length} top-level node_modules entries; ` +
+    `re-copying individually: ${missingTopLevel.slice(0, 5).join(", ")}${missingTopLevel.length > 5 ? ", ..." : ""}`,
+  );
+  for (const pkg of missingTopLevel) {
+    const src = path.join(sourceNodeModules, pkg);
+    const dst = path.join(deployedNodeModules, pkg);
+    if (fs.existsSync(dst)) {
+      fs.rmSync(dst, { recursive: true, force: true });
+    }
+    fs.cpSync(src, dst, {
+      recursive: true,
+      dereference: true,
+      maxRetries: 8,
+      retryDelay: 250,
+    });
+  }
+}
+
+const finalTopLevel = fs.readdirSync(deployedNodeModules);
+
+if (finalTopLevel.length < 200) {
+  console.error(
+    `Integrity check failed: ${deployedNodeModules} has only ` +
+    `${finalTopLevel.length} top-level entries (expected >= 200). ` +
+    `First few: ${finalTopLevel.slice(0, 5).join(", ")}. ` +
+    `fs.cpSync produced a partial copy that even the per-package fallback ` +
+    `could not recover; aborting.`,
+  );
+  process.exit(1);
+}
+
+const expectedWorkspaceScope = path.join(deployedNodeModules, "@deepseek-ai");
+if (!fs.existsSync(expectedWorkspaceScope)) {
+  console.error(
+    `Integrity check failed: workspace packages directory ` +
+    `${expectedWorkspaceScope} is missing.`,
+  );
+  process.exit(1);
+}
+
+console.log(
+  `Integrity check passed: ${finalTopLevel.length} top-level packages staged under node_modules/`,
+);
 
 // The top-level hoist dereferenced above makes the `.pnpm` virtual store
 // redundant at runtime. Dropping it from the deploy keeps the packaged runtime
@@ -371,4 +498,40 @@ const cliBin = path.join(deployDir, "apps", "cli", "lib", "bin.js");
 if (!fs.existsSync(cliBin)) {
   console.error(`Expected deployed CLI entry at ${cliBin}`);
   process.exit(1);
+}
+
+// Stage the first-run environment the desktop shell seeds into the app's own
+// DSH_HOME on first launch. settings.yaml is the shipped default model
+// (committed under apps/desktop/seed); .credentials.yaml is copied from this
+// builder's harness home so a release made on a configured machine is usable
+// immediately after install — it is never committed to the repository.
+const seedDir = path.join(runtimeRoot, "seed");
+fs.rmSync(seedDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+fs.mkdirSync(seedDir, { recursive: true });
+
+fs.copyFileSync(
+  path.join(desktopRoot, "seed", "settings.yaml"),
+  path.join(seedDir, "settings.yaml"),
+);
+
+// A release shipped for public download must never embed the builder's API
+// key. Bundling the local credentials is explicit opt-in
+// (DSH_DESKTOP_BUNDLE_CREDENTIALS=1) for a personal build that should be usable
+// immediately after install. Public builds ship no .credentials.yaml, and the
+// first-run settings UI ("Settings → Models → API key") lets each user store
+// their own key through credentials.set.
+if (process.env.DSH_DESKTOP_BUNDLE_CREDENTIALS !== "1") {
+  console.log("Not bundling credentials (public build); users configure their key in Settings → Models");
+} else {
+  const builderHome = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ""
+    ? process.env.DSH_HOME
+    : path.join(os.homedir(), ".dsh");
+  const builderCredentials = path.join(builderHome, ".credentials.yaml");
+
+  if (fs.existsSync(builderCredentials)) {
+    fs.copyFileSync(builderCredentials, path.join(seedDir, ".credentials.yaml"));
+    console.log(`Staged first-run credentials from ${builderCredentials}`);
+  } else {
+    console.warn(`No ${builderCredentials}; installer will ship without a pre-configured API key`);
+  }
 }
