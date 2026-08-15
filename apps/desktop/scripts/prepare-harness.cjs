@@ -313,6 +313,56 @@ fs.rmSync(path.join(deployDir, "node_modules", ".pnpm"), {
   retryDelay: 250,
 });
 
+// pnpm creates per-package node_modules symlinks inside every workspace
+// package (e.g. apps/cli/node_modules/@deepseek-ai/dsh-base).  The
+// dereferenced cpSync above follows those symlinks and materialises deeply
+// nested node_modules trees whose paths exceed NSIS / Windows MAX_PATH
+// limits, causing the installer build to fail with thousands of "path not
+// found" warnings.  The top-level node_modules already has every dependency
+// the runtime needs, so strip every nested copy.
+function stripNestedNodeModules(root) {
+  const topLevelModules = path.join(root, "node_modules");
+  let removed = 0;
+
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.name === "node_modules") {
+        const fullPath = path.join(dir, entry.name);
+
+        // Keep only the top-level node_modules.
+        if (fullPath === topLevelModules) {
+          continue;
+        }
+
+        fs.rmSync(fullPath, {
+          recursive: true,
+          force: true,
+          maxRetries: 8,
+          retryDelay: 250,
+        });
+        removed += 1;
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name));
+      }
+    }
+  }
+
+  walk(root);
+  console.log(`Stripped ${removed} nested node_modules directories from deploy`);
+}
+
+stripNestedNodeModules(deployDir);
+
 fs.mkdirSync(nodeRuntimeDir, { recursive: true });
 fs.copyFileSync(process.execPath, path.join(nodeRuntimeDir, process.platform === "win32" ? "node.exe" : "node"));
 
