@@ -45,6 +45,58 @@ function getSeedRoot() {
     : path.join(__dirname, "..", "seed");
 }
 
+// Windows Defender's real-time protection re-scans every module file the Node
+// backend reads during cold boot (13k+ files), which dominates first-launch
+// startup time on Windows. On the first launch of a packaged build, offer to
+// add the install directory, the per-user harness home, and the two runtime
+// executables to Defender's exclusion list once, through an elevated
+// PowerShell (a single UAC prompt). A marker file records the attempt so the
+// prompt is never re-raised; a declined UAC is respected. The whole step is
+// best-effort and idempotent.
+function maybeInstallDefenderExclusions() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+
+  const home = app.getPath("userData");
+  const marker = path.join(home, ".defender-exclusions-attempted");
+  if (fs.existsSync(marker)) return;
+
+  // Record the attempt up front so a declined prompt does not reappear on
+  // every launch. Success cannot be cheaply verified from here (reading
+  // exclusions requires elevation), so the marker is not gated on it.
+  try {
+    fs.writeFileSync(marker, String(Date.now()));
+  } catch {
+    return;
+  }
+
+  const singleQuote = (value) => "'" + String(value).replace(/'/g, "''") + "'";
+  const script = [
+    "$ErrorActionPreference = 'Continue'",
+    `Add-MpPreference -ExclusionPath ${singleQuote(path.dirname(process.resourcesPath))}`,
+    `Add-MpPreference -ExclusionPath ${singleQuote(home)}`,
+    `Add-MpPreference -ExclusionProcess ${singleQuote(process.execPath)}`,
+    `Add-MpPreference -ExclusionProcess ${singleQuote(path.join(process.resourcesPath, "node", "node.exe"))}`,
+  ].join("; ");
+
+  // `-EncodedCommand` (UTF-16LE base64) carries the script through
+  // `Start-Process -Verb RunAs` without any quoting loss.
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+
+  try {
+    spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        `Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList '-NoProfile','-EncodedCommand','${encoded}'`,
+      ],
+      { detached: true, stdio: "ignore", windowsHide: true },
+    ).unref();
+  } catch {
+    // Startup must never depend on this optimization succeeding.
+  }
+}
+
 // Copy the bundled first-run environment into the harness home on the first
 // launch only: existing user files are never overwritten, so a later edit or a
 // key rotation survives restarts and re-installs.
@@ -270,6 +322,10 @@ async function createWindow() {
   });
 
   mainWindow.loadURL(getSplashHtml("Starting the local Harness service..."));
+
+  // Fire-and-forget: runs in parallel with the (slow) backend boot below and
+  // never blocks it, whether the user answers the UAC prompt or not.
+  maybeInstallDefenderExclusions();
 
   try {
     const url = await startHarnessServer();
