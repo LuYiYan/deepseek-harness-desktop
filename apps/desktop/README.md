@@ -60,7 +60,10 @@ git push origin desktop-v0.1.0-rc.5.6
 
 ## Notes
 
-- The one-click NSIS installer is per-user (`%LOCALAPPDATA%\Programs\@deepseek-aidsh-desktop`),
-  requires no elevation, and ships an uninstaller alongside the app.
+- The NSIS installer is an assisted per-user wizard: it lets you choose the install
+  directory, creates Start Menu (and desktop) shortcuts, registers in
+  **Add or remove programs**, and ships an uninstaller alongside the app. No
+  elevation is required for the default per-user location.
 - The desktop shell keeps its own `DSH_HOME` under `%APPDATA%\DeepSeek Harness Desktop`,
-  independent of a developer's `~/.dsh`.
+  independent of a developer's `~/.dsh`, so a custom install directory never moves
+  your sessions, settings, or credentials.
