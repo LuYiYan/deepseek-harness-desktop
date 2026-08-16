@@ -164,7 +164,10 @@ function findFreePort(host) {
   });
 }
 
-function waitForServer(url, timeoutMs = 45000) {
+// First boot composes the whole web profile and can be slow on a cold disk or
+// under antivirus scanning, so the readiness window is generous (2 minutes);
+// a real crash is surfaced sooner by the exit race in startHarnessServer.
+function waitForServer(url, timeoutMs = 120000) {
   const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -232,15 +235,22 @@ async function startHarnessServer() {
     ...serverCommand.options,
   });
 
-  serverProcess.once("exit", (code, signal) => {
-    serverProcess = undefined;
+  // Fail the startup wait as soon as the child exits, instead of waiting out
+  // the full timeout; a later exit (after the app is running) still updates
+  // the splash through the same handler.
+  const serverExited = new Promise((_, reject) => {
+    serverProcess.once("exit", (code, signal) => {
+      serverProcess = undefined;
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.loadURL(getSplashHtml(`DeepSeek Harness service stopped. Code: ${code ?? signal ?? "unknown"}`));
-    }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(getSplashHtml(`DeepSeek Harness service stopped. Code: ${code ?? signal ?? "unknown"}`));
+      }
+
+      reject(new Error(`Service exited with code ${code ?? signal ?? "unknown"}`));
+    });
   });
 
-  await waitForServer(url);
+  await Promise.race([waitForServer(url), serverExited]);
   return url;
 }
 
