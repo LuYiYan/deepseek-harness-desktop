@@ -109,13 +109,17 @@ const installResult = spawnSync(
     // TypeScript runtime, alternative-provider SDKs, and test-support tooling —
     // none of which `dsh web` ever loads.
     //
+    // pnpm's `--filter <pkg>` selects ONLY that package; the `...` suffix is
+    // what pulls its (transitive) dependencies into the install, which the
+    // runtime needs. Without it the closure resolves to the bare filters.
+    //
     // The bundle packages declare cordis, the plugin loader, and dsh-invariants
     // as peerDependencies (they must be process singletons). Those peers are
     // runtime infrastructure the web profile loads through the Loader, so pin
     // them here as explicit roots rather than relying on pnpm auto-installing
     // peers.
-    "--filter", "@deepseek-ai/dsh-base",
-    "--filter", "@deepseek-ai/dsh-web-app",
+    "--filter", "@deepseek-ai/dsh-base...",
+    "--filter", "@deepseek-ai/dsh-web-app...",
     "--filter", "@deepseek-ai/cordis",
     "--filter", "@deepseek-ai/cordis-plugin-loader",
     "--filter", "@deepseek-ai/dsh-invariants",

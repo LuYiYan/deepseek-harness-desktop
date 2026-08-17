@@ -27,8 +27,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "deepseek-ai",
-        "repo": "deepseek-harness"
+        "owner": "LuYiYan",
+        "repo": "deepseek-harness-desktop"
       }
     ],
     "files": [
