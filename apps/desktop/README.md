@@ -1,5 +1,7 @@
 # DeepSeek Harness Desktop
 
+English | [中文](README.zh.md)
+
 Electron desktop shell for the DeepSeek Harness web profile. The installer bundles
 the full harness (CLI + web frontend + production `node_modules`) together with a
 Node runtime, so the installed app runs with no Node/pnpm on the target machine.
@@ -37,6 +39,10 @@ Public builds ship no API key. On first launch the app seeds a per-user harness 
 (`%APPDATA%\DeepSeek Harness Desktop`) with the default model (`deepseek-v4-flash`),
 and each user stores their own DeepSeek key in the UI under
 **Settings → Models → API key** (and picks a model there).
+
+On Windows, the first launch also offers — once, via a single elevated UAC prompt —
+to add the install directory, the harness home, and the two runtime executables to
+Windows Defender's exclusion list, avoiding the antivirus-scan-dominated cold boot.
 
 To build a personal installer that embeds the builder's local key (from
 `$DSH_HOME/.credentials.yaml`) so it works immediately after install, opt in
