@@ -11,6 +11,9 @@
     "dist": "pnpm run prepare:harness && node scripts/build-desktop.cjs",
     "pack": "pnpm run prepare:harness && electron-builder --win --dir"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12"
@@ -21,6 +24,13 @@
     "directories": {
       "output": "dist-desktop"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "deepseek-ai",
+        "repo": "deepseek-harness"
+      }
+    ],
     "files": [
       "src/**/*",
       "package.json"

@@ -102,6 +102,23 @@ const installResult = spawnSync(
     // devDependencies (electron, typescript, vitest, tsx, ...). This keeps the
     // installer under the NSIS size limits that otherwise fail the build.
     "--prod",
+    // Install only the web profile's real dependency closure, not the whole
+    // workspace. The bundle packages declare exactly the plugins the profile
+    // mounts; filtering on them excludes every other workspace package's
+    // external deps — the Claude Code subagent SDK (~260MB), the LSP/typert
+    // TypeScript runtime, alternative-provider SDKs, and test-support tooling —
+    // none of which `dsh web` ever loads.
+    //
+    // The bundle packages declare cordis, the plugin loader, and dsh-invariants
+    // as peerDependencies (they must be process singletons). Those peers are
+    // runtime infrastructure the web profile loads through the Loader, so pin
+    // them here as explicit roots rather than relying on pnpm auto-installing
+    // peers.
+    "--filter", "@deepseek-ai/dsh-base",
+    "--filter", "@deepseek-ai/dsh-web-app",
+    "--filter", "@deepseek-ai/cordis",
+    "--filter", "@deepseek-ai/cordis-plugin-loader",
+    "--filter", "@deepseek-ai/dsh-invariants",
   ],
   {
     cwd: buildDir,

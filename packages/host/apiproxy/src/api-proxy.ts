@@ -2989,6 +2989,25 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
       },
 
+      async listPath(request, signal) {
+        const capability = ctx.directoryPicker.capability()
+        if (capability.kind !== 'browse') {
+          return err(request, {
+            code: 'directory-picker-unavailable',
+            message: `host.listPath needs the browse capability; the composed picker serves "${capability.kind}"`,
+            details: { capability: capability.kind },
+          })
+        }
+        try {
+          return ok(request, await capability.listPath(request.payload.path, signal))
+        } catch (error: unknown) {
+          if (signal.aborted) {
+            return err(request, { code: 'cancelled', message: 'path listing was aborted', details: {} })
+          }
+          return err(request, directoryError(error))
+        }
+      },
+
       async createDirectory(request) {
         const capability = ctx.directoryPicker.capability()
         if (capability.kind !== 'browse') {

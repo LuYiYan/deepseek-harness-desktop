@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod'
-import type { DirectoryEntry } from './host.ts'
+import type { DirectoryEntry, PathEntry } from './host.ts'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
 
@@ -48,6 +48,28 @@ export const hostListDirectoryValueSchema = z.object({
   entries: z.array(directoryEntrySchema),
   truncated: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'host.listDirectory'>>>
+
+/** Path row shared by the file explorer's listing entries. */
+export const pathEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  type: z.enum(['file', 'directory']),
+  size: z.number().optional(),
+}) satisfies z.ZodType<Wire<PathEntry>>
+
+/** host.listPath request payload; an absent path lists the home directory. */
+export const hostListPathRequestSchema = z.object({
+  path: z.string().optional(),
+}) satisfies z.ZodType<Wire<RequestPayload<'host.listPath'>>>
+
+/** host.listPath response value: one level with files and directories. */
+export const hostListPathValueSchema = z.object({
+  path: z.string(),
+  home: z.string(),
+  crumbs: z.array(directoryEntrySchema),
+  entries: z.array(pathEntrySchema),
+  truncated: z.boolean(),
+}) satisfies z.ZodType<Wire<ResponseValue<'host.listPath'>>>
 
 /** host.createDirectory request payload: name must be one plain path segment. */
 export const hostCreateDirectoryRequestSchema = z.object({

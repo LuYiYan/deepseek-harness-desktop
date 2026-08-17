@@ -273,6 +273,18 @@
     - id: ui-trajectory
       name: '@deepseek-ai/dsh-client-ui-trajectory'
 
+    # Floating ⌘ quick-command launcher (command palette) over the frame overlay.
+    - id: command-palette
+      name: '@deepseek-ai/dsh-client-ui-command-palette'
+
+    # Floating file explorer (📂) over the frame overlay, above the launcher.
+    - id: file-explorer
+      name: '@deepseek-ai/dsh-client-ui-file-explorer'
+
+    # Task workbench: the "任务" conversation view tab (goal/plan/todos board).
+    - id: task-board
+      name: '@deepseek-ai/dsh-client-ui-task-board'
+
 # ── the agent plane moves behind agent presets ─────────────────────────────
 #
 # Every row below composes what ONE agent contributes to the host registries:

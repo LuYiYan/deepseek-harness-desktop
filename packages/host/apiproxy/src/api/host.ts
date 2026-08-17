@@ -32,6 +32,32 @@ export interface DirectoryListing {
   truncated: boolean
 }
 
+/** One filesystem row of a path listing: a child file or directory. */
+export interface PathEntry {
+  /** Base name shown in a browser row. */
+  name: string
+  /** Absolute host path — the client never joins path segments itself. */
+  path: string
+  /** Whether the child is a file or a directory. */
+  type: 'file' | 'directory'
+  /** Byte size of a regular file, when the backend reports it. */
+  size?: number
+}
+
+/** A path listing for the file explorer: files and directories together. */
+export interface PathListing {
+  /** Absolute path of the listed directory. */
+  path: string
+  /** The host account's home directory (breadcrumb "Home" rooting). */
+  home: string
+  /** Ancestor chain from the filesystem root to the listed directory inclusive. */
+  crumbs: DirectoryEntry[]
+  /** Direct children, name-sorted; directories and files both included. */
+  entries: PathEntry[]
+  /** True when the backend cut `entries` at its complete-result bound. */
+  truncated: boolean
+}
+
 /** Host-level unary methods. */
 export interface HostApi {
   /**
@@ -72,6 +98,17 @@ export interface HostApi {
     request: RpcRequest<{ path?: string }>,
     signal: AbortSignal,
   ): Promise<RpcResponse<DirectoryListing>>
+
+  /**
+   * List one directory level, files and directories together, for the file
+   * explorer. An absent path lists the host account's home directory. Only
+   * served under the `browse` capability; unreadable or missing targets fail
+   * with `directory-unreadable`.
+   */
+  listPath(
+    request: RpcRequest<{ path?: string }>,
+    signal: AbortSignal,
+  ): Promise<RpcResponse<PathListing>>
 
   /**
    * Create one child directory under an existing parent (the browser's

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, Menu, nativeImage, Notification, Tray } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -7,9 +7,25 @@ const path = require("node:path");
 
 let serverProcess;
 let mainWindow;
+let tray;
+let isQuitting = false;
 
 app.setName("DeepSeek Harness");
 app.setPath("userData", path.join(app.getPath("appData"), "DeepSeek Harness Desktop"));
+
+// A second launch focuses the existing window instead of booting a second
+// server and profile. Acquired before ready so the losing process quits
+// without touching userData.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow === undefined || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
 
 function getHarnessRoot() {
   if (app.isPackaged) {
@@ -295,7 +311,14 @@ async function startHarnessServer() {
       serverProcess = undefined;
 
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.loadURL(getSplashHtml(`DeepSeek Harness service stopped. Code: ${code ?? signal ?? "unknown"}`));
+        mainWindow.loadURL(getSplashHtml(`DeepSeek Harness 服务已停止。代码：${code ?? signal ?? "unknown"}`));
+      }
+
+      if (!isQuitting && Notification.isSupported()) {
+        new Notification({
+          title: "DeepSeek Harness",
+          body: `Harness 服务已停止。代码：${code ?? signal ?? "unknown"}`,
+        }).show();
       }
 
       reject(new Error(`Service exited with code ${code ?? signal ?? "unknown"}`));
@@ -306,12 +329,85 @@ async function startHarnessServer() {
   return url;
 }
 
+// ---------- window state ----------
+const windowStateFile = path.join(app.getPath("userData"), "window-state.json");
+
+function loadWindowBounds() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(windowStateFile, "utf8"));
+    const bounds = {};
+    for (const key of ["width", "height", "x", "y"]) {
+      if (typeof parsed?.[key] === "number") bounds[key] = parsed[key];
+    }
+    return bounds;
+  } catch {
+    // First launch or a corrupt state file: fall back to defaults.
+    return {};
+  }
+}
+
+function persistWindowBounds() {
+  if (mainWindow === undefined || mainWindow.isDestroyed()) return;
+  try {
+    fs.writeFileSync(windowStateFile, JSON.stringify(mainWindow.getNormalBounds()));
+  } catch {
+    // Best-effort: a failed write must not affect shutdown.
+  }
+}
+
+// ---------- tray ----------
+function showMainWindow() {
+  if (mainWindow === undefined || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  // The harness badge is the only packaged icon asset; resize it to a
+  // tray-suitable 16px. Replace with a dedicated app icon when one lands.
+  const badgePath = path.join(getHarnessRoot(), "packages", "skill", "skill-badge", "assets", "dsh-badge.png");
+  let icon = nativeImage.createEmpty();
+  try {
+    icon = nativeImage.createFromPath(badgePath).resize({ width: 16, height: 16 });
+  } catch {
+    // Empty icon keeps the tray entry without a visible glyph.
+  }
+  tray = new Tray(icon);
+  tray.setToolTip("DeepSeek Harness");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "显示 DeepSeek Harness", click: () => showMainWindow() },
+    { type: "separator" },
+    { label: "退出", click: () => app.quit() },
+  ]));
+  tray.on("click", () => showMainWindow());
+}
+
+// ---------- auto-update ----------
+// Best-effort: a missing publish config, an offline network, or a
+// code-signature mismatch must never block startup. Updates are downloaded in
+// the background and installed on next launch.
+function maybeCheckForUpdates() {
+  if (!app.isPackaged) return;
+  try {
+    const { autoUpdater } = require("electron-updater");
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.checkForUpdatesAndNotify().catch(() => {
+      // Best-effort: an update check failure is never fatal.
+    });
+  } catch {
+    // electron-updater absent or an update check error; startup continues.
+  }
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 960,
     minHeight: 640,
+    ...loadWindowBounds(),
     backgroundColor: "#101418",
     title: "DeepSeek Harness",
     webPreferences: {
@@ -321,7 +417,8 @@ async function createWindow() {
     },
   });
 
-  mainWindow.loadURL(getSplashHtml("Starting the local Harness service..."));
+  mainWindow.on("close", persistWindowBounds);
+  mainWindow.loadURL(getSplashHtml("正在启动本地 Harness 服务..."));
 
   // Fire-and-forget: runs in parallel with the (slow) backend boot below and
   // never blocks it, whether the user answers the UAC prompt or not.
@@ -332,28 +429,35 @@ async function createWindow() {
     await mainWindow.loadURL(url);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await mainWindow.loadURL(getSplashHtml(`Could not start DeepSeek Harness. ${message}`));
-    dialog.showErrorBox("DeepSeek Harness failed to start", message);
+    await mainWindow.loadURL(getSplashHtml(`无法启动 DeepSeek Harness。${message}`));
+    dialog.showErrorBox("DeepSeek Harness 启动失败", message);
   }
 }
 
-app.whenReady().then(createWindow);
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    createTray();
     createWindow();
-  }
-});
+    maybeCheckForUpdates();
+  });
 
-app.on("before-quit", () => {
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = undefined;
-  }
-});
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+
+  app.on("before-quit", () => {
+    isQuitting = true;
+    if (serverProcess) {
+      serverProcess.kill();
+      serverProcess = undefined;
+    }
+  });
+}

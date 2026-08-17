@@ -18,7 +18,7 @@ import {
   DirectoryPicker, DirectoryPickerError,
 } from '@deepseek-ai/dsh-host-directory-picker'
 import type {
-  DirectoryEntry, DirectoryListing, DirectoryPickerCapability,
+  DirectoryEntry, DirectoryListing, DirectoryPickerCapability, PathEntry, PathListing,
 } from '@deepseek-ai/dsh-host-directory-picker'
 
 /**
@@ -177,6 +177,28 @@ async function directoryRow(
   return { name, path, hidden: name.startsWith('.') }
 }
 
+/**
+ * One path row for a dirent: directories as-is, symlinks and files probed to
+ * classify and capture the size; null for neither (sockets, fifos) and
+ * broken/cyclic links (skipped silently).
+ */
+async function pathRow(
+  parent: string, name: string, isDirectory: boolean, signal: AbortSignal | undefined,
+): Promise<PathEntry | null> {
+  const path = join(parent, name)
+  if (isDirectory) return { name, path, type: 'directory' }
+  try {
+    // Symlink or regular file: one stat probe classifies and reports size.
+    const info = await raceAbort(stat(path), signal)
+    if (info.isDirectory()) return { name, path, type: 'directory' }
+    if (info.isFile()) return { name, path, type: 'file', size: info.size }
+    return null
+  } catch {
+    if (signal?.aborted) throw asError(signal.reason)
+    return null
+  }
+}
+
 /** Validated plugin configuration. */
 export interface Config {
   /** Complete-result bound of one listing level; see {@link BrowseDirectoryPicker.Config}. */
@@ -199,6 +221,7 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
   private readonly browseCapability: DirectoryPickerCapability = {
     kind: 'browse',
     list: (path, signal) => this.list(path, signal),
+    listPath: (path, signal) => this.listPath(path, signal),
     createDirectory: (path, name) => this.createDirectory(path, name),
   }
 
@@ -286,6 +309,57 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
       // next probe (each probe's own await is raced inside directoryRow).
       signal?.throwIfAborted()
       const row = await directoryRow(target, candidate.name, candidate.isDirectory, candidate.isSymbolicLink, signal)
+      if (row === null) continue
+      if (entries.length === this.config.maxEntries) {
+        truncated = true
+        break
+      }
+      entries.push(row)
+    }
+    return { path: target, home, crumbs: ancestryCrumbs(target), entries, truncated }
+  }
+
+  private async listPath(path?: string, signal?: AbortSignal): Promise<PathListing> {
+    const home = homedir()
+    // Same fully-qualified fence as list: never rebase a wire path under the
+    // host cwd or, on Windows, its current drive.
+    if (path !== undefined && !fullyQualified(path)) {
+      throw new DirectoryPickerError('directory-unreadable', path, `cannot list "${path}": not a fully qualified path`)
+    }
+    const target = resolve(path ?? home)
+    const keep = this.config.maxEntries + 1
+    const window: ListingCandidate[] = []
+    let evicted = false
+    try {
+      const opening = opendir(target)
+      const level = await raceAbort(opening, signal).catch((error: unknown) => {
+        void opening.then(dir => dir.close().catch(swallowCloseFailure), () => {})
+        throw error
+      })
+      try {
+        for (;;) {
+          const dirent = await raceAbort(level.read(), signal)
+          if (dirent === null) break
+          // Files and directories both contend for the window; sockets and
+          // fifos (neither) are skipped.
+          if (!dirent.isFile() && !dirent.isDirectory() && !dirent.isSymbolicLink()) continue
+          const candidate = { name: dirent.name, isDirectory: dirent.isDirectory(), isSymbolicLink: dirent.isSymbolicLink() }
+          if (boundedInsert(window, candidate, keep)) evicted = true
+        }
+      } finally {
+        const closing = level.close()
+        if (signal?.aborted) closing.catch(swallowCloseFailure)
+        else await closing
+      }
+    } catch (error: unknown) {
+      signal?.throwIfAborted()
+      throw new DirectoryPickerError('directory-unreadable', target, `cannot list ${target}: ${messageOf(error)}`)
+    }
+    const entries: PathEntry[] = []
+    let truncated = evicted
+    for (const candidate of window) {
+      signal?.throwIfAborted()
+      const row = await pathRow(target, candidate.name, candidate.isDirectory, signal)
       if (row === null) continue
       if (entries.length === this.config.maxEntries) {
         truncated = true

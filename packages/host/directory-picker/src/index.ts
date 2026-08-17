@@ -55,6 +55,32 @@ export interface DirectoryListing {
   truncated: boolean
 }
 
+/** One filesystem row of a path listing: a child file or directory. */
+export interface PathEntry {
+  /** Base name shown in a browser row. */
+  name: string
+  /** Absolute host path — clients never join path segments themselves. */
+  path: string
+  /** Whether the child is a file or a directory. */
+  type: 'file' | 'directory'
+  /** Byte size of a regular file, when the backend reports it. */
+  size?: number
+}
+
+/** One path level plus its ancestry, files and directories together. */
+export interface PathListing {
+  /** Absolute path of the listed directory. */
+  path: string
+  /** The host account's home directory (breadcrumb "Home" rooting). */
+  home: string
+  /** Ancestor chain from the filesystem root to the listed directory inclusive. */
+  crumbs: DirectoryEntry[]
+  /** Direct children, name-sorted; directories and files both included. */
+  entries: PathEntry[]
+  /** True when the backend cut `entries` at its complete-result bound. */
+  truncated: boolean
+}
+
 /**
  * The browse interaction: listing/creation primitives an in-app browser
  * drives one level at a time. Works for remote clients — nothing renders on
@@ -75,6 +101,16 @@ export interface DirectoryPickerBrowseCapability {
    * Windows, its current drive) or cannot be listed.
    */
   list(path?: string, signal?: AbortSignal): Promise<DirectoryListing>
+  /**
+   * List one directory level, files and directories together, for a file
+   * explorer. Same fencing and bounded-result contract as {@link list}.
+   * @param path - absolute directory to list; absent lists the home directory.
+   * @param signal - caller lifetime; abort stops the scan.
+   * @returns the level's path listing with ancestry.
+   * @throws {DirectoryPickerError} `directory-unreadable` for an unqualified or
+   * unreadable target.
+   */
+  listPath(path?: string, signal?: AbortSignal): Promise<PathListing>
   /**
    * Create one child directory under an existing parent.
    * @param path - absolute existing parent directory.
